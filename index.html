@@ -94,6 +94,12 @@
     0%,30%,100%{box-shadow:0 0 0 2px var(--live),0 0 5px 1px rgba(209,73,58,.30),0 1px 3px rgba(0,0,0,.18)}
     15%{box-shadow:0 0 0 3px var(--live),0 0 12px 4px rgba(209,73,58,.55),0 1px 3px rgba(0,0,0,.18)}
   }
+  /* Host-nation glow: a subtle outline ring so USA/Mexico/Canada flags are
+     distinguishable at a glance, in any round, without fighting the existing
+     box-shadow/border-color states (.win/.champ/.soon/.deck/.live) above. */
+  .flag.host-us{outline:2px solid var(--us);outline-offset:2px}
+  .flag.host-mx{outline:2px solid var(--mx);outline-offset:2px}
+  .flag.host-ca{outline:2px solid var(--ca);outline-offset:2px}
 
   /* Custom hover/tap tooltip showing the match score */
   .tooltip{
@@ -237,6 +243,12 @@ function flagURL(team, w){ // w = flagcdn width bucket
   const iso = ISO[team];
   return iso ? `https://flagcdn.com/${w}/${iso}.png` : "";
 }
+
+/* Team name -> host-nation tint (2026's three hosts), driving a subtle glow on
+   that team's flag in every round it appears. Keyed on team name (not venue —
+   NATION below is keyed on host city and drives a separate, unrelated feature). */
+const HOST = {"USA":"us","United States":"us","Mexico":"mx","Canada":"ca"};
+function hostClass(team){ const h = HOST[team]; return h ? " host-"+h : ""; }
 
 /* Feed "ground" (host city) -> stadium name. Hand-authored like ISO, keyed on
    the exact strings the feed uses; an unknown ground falls back to the raw
@@ -580,7 +592,7 @@ function render(model){
     const win = model[f.num].winner;
     const elim = win && win!==team; // this team lost its R32 match
     const tip = tipFor(model,f.num);
-    flags.push({x,y,team,cls:"r0"+(elim?" eliminated":(win===team?" win":""))+hlClass(tip),
+    flags.push({x,y,team,cls:"r0"+(elim?" eliminated":(win===team?" win":""))+hlClass(tip)+hostClass(team),
                 tip, ground:model[f.num].ground});
   });
 
@@ -613,7 +625,7 @@ function render(model){
       // R32 ring uses (winner of two adjacent participants). So on each ring inward,
       // the flag that advanced out of that round is highlighted.
       const advanced = nextNum!=null && model[nextNum] && model[nextNum].winner===w ? " win" : "";
-      flags.push({x,y,team:w,cls:`r${lvl}${advanced}${pop}${hlClass(tip)}`, tip, ground:model[num].ground});
+      flags.push({x,y,team:w,cls:`r${lvl}${advanced}${pop}${hlClass(tip)}${hostClass(w)}`, tip, ground:model[num].ground});
     } else {
       dots += `<circle class="dot" ${gAttr} cx="${x}" cy="${y}" r="3.4"/>`;
     }
@@ -630,7 +642,7 @@ function render(model){
     newWinners[ROOT] = finalNode.winner;
     const pop = (prevWinners[ROOT]!==finalNode.winner) ? " pop" : "";
     const t = tipFor(model,ROOT); t.round = "Champion";
-    champFlag = {x:CX,y:CY,team:finalNode.winner,cls:`champ${pop}`,tip:t,ground:finalNode.ground};
+    champFlag = {x:CX,y:CY,team:finalNode.winner,cls:`champ${pop}${hostClass(finalNode.winner)}`,tip:t,ground:finalNode.ground};
   } else {
     center += trophySVG(finalNode.ground);
   }
