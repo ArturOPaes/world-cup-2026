@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>World Cup 2026 Circular Bracket</title>
+<meta name="description" content="Auto-updating circular bracket for the 2026 World Cup knockout stage. Static, client-side, no backend." />
+<style>
+  :root{
+    --bg:#f2ede1;
+    --ink:#1c1b18;
+    --line:#2a2823;
+    --muted:#9a948a;
+    --gold:#c8a24a;
+    --live:#d1493a;
+    /* Host-nation tints for the venue legend + spotlight capsules */
+    --mx:#3d8b57;
+    --us:#5471a8;
+    --ca:#c0563c;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    min-height:100%;
+  }
+  header{
+    text-align:center;
+    padding:18px 12px 4px;
+  }
+  header h1{
+    margin:0;
+    font-size:clamp(20px,3.4vw,34px);
+    font-weight:800;
+    letter-spacing:.2px;
+  }
+  /* Desktop: tighten the header so the venue controls sit higher and show more readily */
+  @media (min-width:720px){
+    header{padding:8px 12px 2px}
+    .stage{margin-top:2px}
+  }
+  /* Square responsive stage that holds the SVG (lines/dots/trophy) and the flag overlay.
+     The vw/vh width is only a no-JS fallback: viewport units track browser zoom, which
+     would pin the bracket to the screen. fitStage() overrides it with an absolute px
+     width so Ctrl +/- zooms the bracket like normal content. */
+  .stage{
+    position:relative;
+    width:min(94vw, 86vh, 920px);
+    aspect-ratio:1/1;
+    margin:6px auto 4px;
+  }
+  .stage svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+  .conn{fill:none;stroke:var(--line);stroke-width:2.2;stroke-linejoin:round;stroke-linecap:round}
+  .dot{fill:var(--line)}
+  .center-line{stroke:var(--line);stroke-width:2.2}
+
+  /* Flags are HTML imgs positioned over the SVG so circular clipping is trivial */
+  .flag{
+    position:absolute;
+    transform:translate(-50%,-50%);
+    border-radius:50%;
+    object-fit:cover;
+    background:#fff;
+    box-shadow:0 1px 3px rgba(0,0,0,.18);
+    border:2px solid #fff;
+    aspect-ratio:1/1;
+    cursor:default;
+    transition:width .25s ease, height .25s ease, opacity .2s ease;
+  }
+  .flag.r0{width:6.6%}
+  .flag.r1{width:5.7%}
+  .flag.r2{width:5.2%}
+  .flag.r3{width:5.0%}
+  .flag.r4{width:5.0%}
+  .flag.champ{width:9%;border-color:var(--gold);box-shadow:0 0 0 3px var(--gold),0 2px 8px rgba(0,0,0,.3)}
+  .flag.eliminated{filter:grayscale(.7) opacity(.78)}
+  .flag.win{border-color:var(--gold)}
+  .flag.pop{animation:pop .55s cubic-bezier(.2,1.5,.4,1)}
+  @keyframes pop{0%{transform:translate(-50%,-50%) scale(.1);opacity:0}60%{transform:translate(-50%,-50%) scale(1.18)}100%{transform:translate(-50%,-50%) scale(1);opacity:1}}
+  /* Subtle status cues for the two teams about to play a match. .soon = soft
+     static gold ring (today, <12h); .deck = the same gold gently pulsing (on
+     deck, <4h); .live = pulsing red halo. */
+  .flag.soon{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold),0 1px 3px rgba(0,0,0,.18)}
+  .flag.deck{border-color:var(--gold);animation:deckPulse 4s ease-in-out infinite}
+  .flag.live{border-color:var(--live);animation:livePulse 4s ease-in-out infinite}
+  @keyframes deckPulse{
+    0%,30%,100%{box-shadow:0 0 0 2px var(--gold),0 0 5px 1px rgba(200,162,74,.30),0 1px 3px rgba(0,0,0,.18)}
+    15%{box-shadow:0 0 0 3px var(--gold),0 0 12px 4px rgba(200,162,74,.55),0 1px 3px rgba(0,0,0,.18)}
+  }
+  @keyframes livePulse{
+    0%,30%,100%{box-shadow:0 0 0 2px var(--live),0 0 5px 1px rgba(209,73,58,.30),0 1px 3px rgba(0,0,0,.18)}
+    15%{box-shadow:0 0 0 3px var(--live),0 0 12px 4px rgba(209,73,58,.55),0 1px 3px rgba(0,0,0,.18)}
+  }
+
+  /* Custom hover/tap tooltip showing the match score */
+  .tooltip{
+    position:fixed;z-index:50;pointer-events:none;
+    background:#1c1b18;color:#f2ede1;
+    padding:7px 12px;border-radius:10px;
+    font-size:13px;line-height:1.35;text-align:center;white-space:nowrap;
+    box-shadow:0 6px 18px rgba(0,0,0,.30);
+    opacity:0;transform:translate(-50%,-100%) translateY(-6px) scale(.96);
+    transition:opacity .12s ease, transform .12s ease;
+  }
+  .tooltip.on{opacity:1;transform:translate(-50%,-100%) translateY(-10px) scale(1)}
+  .tooltip::after{content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%) rotate(45deg);
+    width:10px;height:10px;background:#1c1b18;border-radius:2px}
+  /* flipped below the flag (for flags near the top edge) */
+  .tooltip.below{transform:translate(-50%,0) translateY(6px) scale(.96)}
+  .tooltip.below.on{transform:translate(-50%,0) translateY(10px) scale(1)}
+  .tooltip.below::after{top:-5px;bottom:auto}
+  .tooltip .tt-round{font-size:10px;letter-spacing:.7px;text-transform:uppercase;font-weight:700;color:var(--gold)}
+  .tooltip .tt-teams{font-weight:600;margin-top:2px}
+  .tooltip .tt-score{margin-top:3px;font-size:16px;font-weight:800}
+  .tooltip .tt-score.pending{font-size:12px;font-weight:500;color:#cfc9bd}
+  .tooltip .tt-score.live{color:#ff7a68}
+  .tooltip .tt-score.live .live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;
+    background:var(--live);margin-right:6px;vertical-align:middle;animation:livePulse 1.7s ease-in-out infinite}
+  .tooltip .tt-soon{margin-top:2px;font-size:10px;letter-spacing:.7px;text-transform:uppercase;
+    font-weight:700;color:var(--gold)}
+  .tooltip .tt-venue{margin-top:4px;font-size:11px;color:#cfc9bd}
+
+  /* Venue toggle + interactive legend: every match carries a "stadium crescent"
+     behind its two participants, tinted by the host nation (Mexico green / USA
+     blue / Canada red). Crescents stay hidden until the venue toggle is on;
+     turning it on reveals them all at once, and hovering/tapping a stadium pill
+     spotlights its matches (they pop while the rest fade via .vfilter). */
+  .conn,.dot,.center-line,.trophy{transition:opacity .2s ease;pointer-events:none}
+  /* A crescent's stroke is always the hover/tap hitbox for the match tooltip
+     (pointer-events:stroke hits the stroke area regardless of opacity). Lines/dots
+     above them never take the pointer so they can't shadow the crescent underneath. */
+  .cap{fill:none;stroke:var(--gold);stroke-linecap:round;opacity:0;
+    transition:opacity .25s ease;pointer-events:stroke}
+  .cap.mx{stroke:var(--mx)}
+  .cap.us{stroke:var(--us)}
+  .cap.ca{stroke:var(--ca)}
+  /* Venue mode on: show every crescent. With nothing pinned there is no .vfilter,
+     so they all stay lit — "no venues selected" reads the same as "all selected". */
+  .stage.venues-on .cap{opacity:.3}
+  /* Spotlight: a pinned/hovered stadium's crescents brighten, the rest fade back. */
+  .stage.vfilter .cap{opacity:.1}
+  .stage.vfilter .cap.vhit{opacity:.42}
+  .stage.vfilter .flag:not(.vhit){opacity:.18}
+  .stage.vfilter .conn:not(.vhit),.stage.vfilter .dot:not(.vhit),
+  .stage.vfilter .center-line:not(.vhit),.stage.vfilter .trophy:not(.vhit){opacity:.12}
+  .controls{text-align:center;margin-top:2px}
+  .vtoggle{
+    font:inherit;font-size:12px;color:var(--muted);
+    background:none;border:1px solid rgba(28,27,24,.22);border-radius:999px;
+    padding:4px 12px;cursor:pointer;
+  }
+  .vtoggle:hover{color:var(--ink);border-color:var(--ink)}
+  .vtoggle.on{color:var(--ink);border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+  .legend{display:none;flex-wrap:wrap;justify-content:center;gap:6px;
+    width:min(94vw,920px);margin:10px auto 2px}
+  .legend.on{display:flex}
+  .venue{
+    font:inherit;font-size:12px;color:var(--ink);background:#fff;
+    border:1px solid rgba(28,27,24,.18);border-radius:999px;padding:3px 10px;cursor:pointer;
+    transition:border-color .15s, box-shadow .15s;
+  }
+  /* Gentle host-nation tint; hover/selection gold below still wins the border */
+  .venue.mx{background:#eef4ef;border-color:rgba(61,139,87,.4)}
+  .venue.us{background:#eef1f6;border-color:rgba(84,113,168,.4)}
+  .venue.ca{background:#f6efec;border-color:rgba(192,86,60,.4)}
+  .venue:hover{border-color:var(--gold)}
+  .venue.sel{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+  .venue .n{color:var(--muted);margin-left:6px;font-size:11px}
+
+  footer{
+    color:var(--muted);font-size:12.5px;text-align:center;
+    padding:2px 12px 22px;line-height:1.5;
+  }
+  footer a{color:var(--muted)}
+  .status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--gold);vertical-align:middle;margin-right:5px}
+  .status-dot.ok{background:#4a9d5b}
+  .status-dot.err{background:#c0563c}
+</style>
+</head>
+<body>
+  <header>
+    <h1>World Cup 2026</h1>
+  </header>
+
+  <div class="stage" id="stage" aria-label="World Cup 2026 knockout bracket"></div>
+
+  <div class="controls">
+    <button class="vtoggle" id="venueToggle" aria-pressed="false">Show venues</button>
+    <div class="legend" id="venueLegend" role="group" aria-label="Stadiums"></div>
+  </div>
+
+  <footer>
+    <div><span class="status-dot" id="statusDot"></span><span id="status">Loading…</span></div>
+    <div style="margin-top:4px">Data: <a href="https://github.com/openfootball/worldcup.json" target="_blank" rel="noopener">openfootball</a> · Flags: <a href="https://flagcdn.com" target="_blank" rel="noopener">flagcdn</a></div>
+  </footer>
+
+<script>
+"use strict";
+/* ============================================================================
+   World Cup 2026 — Circular bracket
+   Pure static, client-side; fetches once per page load. See README / design doc.
+
+   Pipeline (design §8):
+     fetchResults()  -> raw matches (ONLY source-specific code)
+     normalize()     -> map num -> match
+     buildModel()    -> static skeleton + results overlay (winners propagate in)
+     layout()        -> polar (radius, angle) per node, bottom-up angle = mean
+     render()        -> SVG lines/dots/trophy + HTML circular flags, diff-animated
+============================================================================ */
+
+/* ----------------------------- Config -------------------------------------- */
+const FEED_URL = "https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json";
+/* Last-commit time of the feed file = when the source data actually changed.
+   Unauthenticated GitHub API: 60 req/h per IP; one call per page load. */
+const FEED_COMMITS_URL = "https://api.github.com/repos/openfootball/worldcup.json/commits?path=2026/worldcup.json&per_page=1&sha=master";
+
+/* Team name -> ISO 3166-1 alpha-2 (flagcdn slug). The only hand-authored data.
+   Must match the exact strings the feed uses. */
+const ISO = {
+  "South Africa":"za","Canada":"ca","Germany":"de","Paraguay":"py",
+  "Netherlands":"nl","Morocco":"ma","Brazil":"br","Japan":"jp",
+  "France":"fr","Sweden":"se","Ivory Coast":"ci","Norway":"no",
+  "Mexico":"mx","Ecuador":"ec","England":"gb-eng","DR Congo":"cd",
+  "USA":"us","Bosnia & Herzegovina":"ba","Belgium":"be","Senegal":"sn",
+  "Portugal":"pt","Croatia":"hr","Spain":"es","Austria":"at",
+  "Switzerland":"ch","Algeria":"dz","Argentina":"ar","Cape Verde":"cv",
+  "Colombia":"co","Ghana":"gh","Australia":"au","Egypt":"eg",
+  // a few likely-alternates so a feed rename won't blank a flag
+  "United States":"us","Côte d'Ivoire":"ci","Cabo Verde":"cv",
+  "IR Iran":"ir","Iran":"ir","Korea Republic":"kr","South Korea":"kr",
+  "USA ":"us"
+};
+function flagURL(team, w){ // w = flagcdn width bucket
+  const iso = ISO[team];
+  return iso ? `https://flagcdn.com/${w}/${iso}.png` : "";
+}
+
+/* Feed "ground" (host city) -> stadium name. Hand-authored like ISO, keyed on
+   the exact strings the feed uses; an unknown ground falls back to the raw
+   feed string so venue info degrades gracefully rather than disappearing. */
+const STADIUM = {
+  "Atlanta":"Atlanta",
+  "Boston (Foxborough)":"Boston",
+  "Dallas (Arlington)":"Dallas",
+  "Guadalajara (Zapopan)":"Guadalajara",
+  "Houston":"Houston",
+  "Kansas City":"Kansas City",
+  "Los Angeles (Inglewood)":"Los Angeles",
+  "Mexico City":"Mexico City",
+  "Miami (Miami Gardens)":"Miami",
+  "Monterrey (Guadalupe)":"Monterrey",
+  "New York/New Jersey (East Rutherford)":"New York/New Jersey",
+  "Philadelphia":"Philadelphia",
+  "San Francisco Bay Area (Santa Clara)":"San Francisco",
+  "Seattle":"Seattle",
+  "Toronto":"Toronto",
+  "Vancouver":"Vancouver"
+};
+function venueLabel(ground){ return ground ? (STADIUM[ground] || ground) : ""; }
+
+/* Feed "ground" -> host nation, driving the gentle green/red/blue tint on the
+   legend pills and spotlight capsules. An unknown ground just stays untinted. */
+const NATION = {
+  "Atlanta":"us",
+  "Boston (Foxborough)":"us",
+  "Dallas (Arlington)":"us",
+  "Guadalajara (Zapopan)":"mx",
+  "Houston":"us",
+  "Kansas City":"us",
+  "Los Angeles (Inglewood)":"us",
+  "Mexico City":"mx",
+  "Miami (Miami Gardens)":"us",
+  "Monterrey (Guadalupe)":"mx",
+  "New York/New Jersey (East Rutherford)":"us",
+  "Philadelphia":"us",
+  "San Francisco Bay Area (Santa Clara)":"us",
+  "Seattle":"us",
+  "Toronto":"ca",
+  "Vancouver":"ca"
+};
+function nationClass(ground){ const n = NATION[ground]; return n ? " "+n : ""; }
+
+/* ---- Static bracket skeleton (design §5): match num -> [childNum, childNum].
+   Fixed and known in advance; results only overlay on top. R32 (73–88) are
+   the leaves whose two participants are the team flags. (Match 103, the
+   third-place play-off, is intentionally outside the radial tree.) */
+const ROOT = 104;
+const CHILDREN = {
+  89:[74,77], 90:[73,75], 91:[76,78], 92:[79,80],
+  93:[83,84], 94:[81,82], 95:[86,88], 96:[85,87],
+  97:[89,90], 98:[93,94], 99:[91,92], 100:[95,96],
+  101:[97,98], 102:[99,100],
+  104:[101,102]
+};
+const R32_NUMS = [73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88];
+const R32SET = new Set(R32_NUMS);
+// every match node on the radial bracket, outer ring first
+const NODE_NUMS = [...R32_NUMS, 89,90,91,92,93,94,95,96,97,98,99,100,101,102,104];
+
+/* Reverse of CHILDREN: match num -> its parent (the next-round match its winner
+   advances into). R32 leaves point at their R16 match; the Final (ROOT) has no
+   parent. Built once from CHILDREN so the two never drift apart. */
+const PARENT = {};
+for (const [p, kids] of Object.entries(CHILDREN)){
+  for (const c of kids) PARENT[c] = +p;
+}
+
+/* Ring level: R32 match node = 1 … Final = 5 (center). Flags live at level 0. */
+function levelOf(num){
+  if (R32SET.has(num)) return 1;
+  if (num>=89 && num<=96) return 2;
+  if (num>=97 && num<=100) return 3;
+  if (num>=101 && num<=102) return 4;
+  return 5; // final
+}
+
+/* --------------------------- Geometry (design §6) -------------------------- */
+const CX = 500, CY = 500;
+// radius per ring level (viewBox units). 0 = outer flags … 5 = center.
+const RADIUS = {0:430, 1:344, 2:260, 3:178, 4:98, 5:0};
+const STEP = 360/32; // angular slot per outer flag
+
+// 32 outer flags in tree DFS order (team1-subtree first). This reproduces the
+// reference layout: left semicircle = first 16, right semicircle = last 16.
+function dfsFlags(num){
+  if (R32SET.has(num)) return [{num,slot:0},{num,slot:1}];
+  const [a,b] = CHILDREN[num];
+  return dfsFlags(a).concat(dfsFlags(b));
+}
+const FLAG_ORDER = dfsFlags(ROOT); // length 32
+
+// flag index -> angle (deg, measured from 12 o'clock, clockwise positive).
+function flagAngle(i){
+  return (i<16) ? -(i+0.5)*STEP : ((i-16)+0.5)*STEP;
+}
+// match num -> angle (deg). Leaf = mean of its two flags; inner = mean of children.
+const _angleMemo = {};
+function angleOf(num){
+  if (num in _angleMemo) return _angleMemo[num];
+  let a;
+  if (R32SET.has(num)){
+    const idx = [];
+    FLAG_ORDER.forEach((f,i)=>{ if(f.num===num) idx.push(i); });
+    a = (flagAngle(idx[0]) + flagAngle(idx[1]))/2;
+  } else {
+    const [c1,c2] = CHILDREN[num];
+    a = (angleOf(c1) + angleOf(c2))/2;
+  }
+  return (_angleMemo[num] = a);
+}
+// polar (radius, angleDeg) -> screen point
+function pt(radius, angDeg){
+  const r = angDeg*Math.PI/180;
+  return [CX + radius*Math.sin(r), CY - radius*Math.cos(r)];
+}
+
+/* --------------------------- Data adapter (design §8) --------------------- */
+async function fetchResults(){
+  const res = await fetch(FEED_URL, {cache:"no-store"});
+  if (!res.ok) throw new Error("HTTP "+res.status);
+  const data = await res.json();
+  return data.matches || [];
+}
+// num -> raw match
+function normalize(matches){
+  const map = {};
+  for (const m of matches){ if (m && m.num!=null) map[m.num] = m; }
+  return map;
+}
+
+// Winner index (0=team1,1=team2) from a score, precedence p -> et -> ft. null if undecided.
+function winnerIndex(score){
+  if (!score) return null;
+  const s = score.p || score.et || score.ft;
+  if (!s || s.length<2 || s[0]===s[1]) return null;
+  return s[0] > s[1] ? 0 : 1;
+}
+function scoreLabel(score){
+  if (!score) return "";
+  if (score.p){
+    const base = score.et || score.ft || score.p;
+    return `${base[0]}–${base[1]} (${score.p[0]}–${score.p[1]} pens)`;
+  }
+  if (score.et) return `${score.et[0]}–${score.et[1]} a.e.t.`;
+  if (score.ft) return `${score.ft[0]}–${score.ft[1]}`;
+  return "";
+}
+
+/* Build the resolved model: for every node compute its two participants and its
+   winner. Participants of an inner node = winners of its children (propagated
+   inward); a missing side stays null (TBD). */
+function buildModel(feed){
+  const node = {}; // num -> {participants:[t1,t2|null], winner:string|null, score, label}
+  const _w = {};
+  function participants(num){
+    if (R32SET.has(num)){
+      const m = feed[num] || {};
+      return [m.team1 || null, m.team2 || null];
+    }
+    const [c1,c2] = CHILDREN[num];
+    return [winner(c1), winner(c2)];
+  }
+  function winner(num){
+    if (num in _w) return _w[num];
+    const p = participants(num);
+    const sc = (feed[num]||{}).score;
+    const idx = winnerIndex(sc);
+    let w = null;
+    if (idx!=null && p[idx]) w = p[idx];
+    return (_w[num] = w);
+  }
+  for (const num of NODE_NUMS){
+    const p = participants(num);
+    const m = feed[num] || {};
+    const sc = m.score;
+    node[num] = { participants:p, winner:winner(num), score:sc, label:scoreLabel(sc),
+                  date:m.date||"", time:m.time||"", ground:m.ground||"" };
+  }
+  return node;
+}
+
+/* ------------------------------ Rendering --------------------------------- */
+const stage = document.getElementById("stage");
+
+/* Size the stage in absolute px. Viewport units (vw/vh) shrink under browser
+   zoom, which kept the bracket visually glued to the screen while px-sized
+   text grew. Instead: fit once in px, re-fit on genuine window resizes, and
+   skip re-fitting when the resize came from zoom (devicePixelRatio changed)
+   so the bracket scales with the rest of the page. */
+function fitStage(){
+  const s = Math.min(window.innerWidth*0.94, window.innerHeight*0.86, 920);
+  stage.style.width = s + "px";
+}
+let stageDPR = window.devicePixelRatio || 1;
+fitStage();
+window.addEventListener("resize", ()=>{
+  const dpr = window.devicePixelRatio || 1;
+  if (dpr !== stageDPR){ stageDPR = dpr; return; } // zoom, not a resize
+  fitStage();
+});
+let prevWinners = {}; // num -> winner team, for diff/pop animation
+let nowMs = Date.now(); // one consistent clock per render, for live/deck/soon highlighting
+
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+// Parse the feed's "12:00 UTC-4" / "20:00 UTC+5:30" (venue local time with an explicit
+// offset) plus the date into a real UTC instant. Returns a Date, or null if unparseable.
+function kickoffInstant(dateStr, timeStr){
+  const dm = (dateStr||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const tm = (timeStr||"").match(/^(\d{1,2}):(\d{2})(?:\s*UTC([+-])(\d{1,2})(?::(\d{2}))?)?/);
+  if (!dm || !tm) return null;
+  // Offset defaults to UTC (Z) if the feed omits it; sign/hours/minutes otherwise.
+  const sign = tm[3]==="-" ? -1 : 1;
+  const offMin = tm[3] ? sign*(+tm[4]*60 + (+tm[5]||0)) : 0;
+  // UTC ms = wall-clock-as-UTC minus the venue offset.
+  const asUTC = Date.UTC(+dm[1], +dm[2]-1, +dm[3], +tm[1], +tm[2]);
+  const d = new Date(asUTC - offMin*60000);
+  return isNaN(d.getTime()) ? null : d;
+}
+function kickoff(node){ // -> e.g. "28 Jun · 12:00 PDT" in the viewer's own time zone
+  if (!node.date) return "Not played yet";
+  const d = kickoffInstant(node.date, node.time);
+  if (d){
+    const day = d.toLocaleDateString([], {day:"numeric", month:"short"});
+    const t = node.time
+      ? d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", timeZoneName:"short"})
+      : "";
+    return t ? `${day} · ${t}` : day;
+  }
+  // Fallback: show the raw feed strings if parsing ever fails.
+  const m = node.date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const day = m ? `${+m[3]} ${MONTHS[+m[2]-1]}` : node.date;
+  return node.time ? `${day} · ${node.time}` : day;
+}
+// Highlight windows: a match is "live" from kickoff until this long after (covers
+// play + the feed's own lag before a final score lands); ahead of kickoff it's
+// "deck" (on deck, imminent) then "soon" (today) as the ramp widens out.
+const LIVE_MS = 150*60000; // 2.5 h
+const DECK_MS = 240*60000; // 4 h
+const SOON_MS = 720*60000; // 12 h
+// "live" | "deck" | "soon" | "" for a match node, based on the viewer's clock.
+// Only matches with both teams known and no result yet can be highlighted.
+function matchStatus(node, now){
+  if (!node || node.label) return "";               // already has a score -> finished
+  if (!node.participants[0] || !node.participants[1]) return ""; // teams not set yet
+  const d = kickoffInstant(node.date, node.time);
+  if (!d) return "";
+  const diff = d.getTime() - now;                   // ms until kickoff (<0 = under way)
+  if (diff <= 0) return now < d.getTime() + LIVE_MS ? "live" : "";
+  if (diff <= DECK_MS) return "deck";               // imminent (<4 h)
+  return diff <= SOON_MS ? "soon" : "";             // today (<12 h)
+}
+// tooltip fields for a match node (same match backs both its outer flags and its winner flag)
+function tipFor(model, num){
+  const n = model[num];
+  const teams = `${n.participants[0]||"TBD"} vs ${n.participants[1]||"TBD"}`;
+  return { round:roundName(num), teams, score:n.label, when:n.label?"":kickoff(n),
+           status:matchStatus(n, nowMs), venue:venueLabel(n.ground) };
+}
+// leading-space CSS class for a tip's status (""/" live"/" deck"/" soon")
+function hlClass(tip){ return tip.status ? " "+tip.status : ""; }
+// data attributes carrying a tip onto an element (flag or capsule). data-venue
+// is the tooltip's match venue; data-ground is the match AT this element's
+// position, which is what the venue filter spotlights.
+function tipAttrs(tip, ground){
+  return `data-round="${escapeAttr(tip.round)}" data-teams="${escapeAttr(tip.teams)}" `+
+         `data-score="${escapeAttr(tip.score||"")}" data-when="${escapeAttr(tip.when||"")}" `+
+         `data-status="${escapeAttr(tip.status||"")}" data-venue="${escapeAttr(tip.venue||"")}" `+
+         `data-ground="${escapeAttr(ground||"")}"`;
+}
+
+function connectorPath(num){
+  // child ring radius (outer) and this node's radius (inner)
+  const lvl = levelOf(num);
+  const Rc = RADIUS[lvl-1];
+  const Rp = RADIUS[lvl];
+  const [c1,c2] = R32SET.has(num)
+    ? [{ang:childFlagAngle(num,0)},{ang:childFlagAngle(num,1)}]
+    : [{ang:angleOf(CHILDREN[num][0])},{ang:angleOf(CHILDREN[num][1])}];
+  const ap = angleOf(num);
+  const A1 = pt(Rp, c1.ang), A2 = pt(Rp, c2.ang);
+  const C1 = pt(Rc, c1.ang), C2 = pt(Rc, c2.ang);
+  const P  = pt(Rp, ap);
+  // quadratic control so the curve passes exactly through the parent node P
+  const ctrl = [2*P[0] - 0.5*(A1[0]+A2[0]), 2*P[1] - 0.5*(A1[1]+A2[1])];
+  return `M${C1[0]} ${C1[1]} L${A1[0]} ${A1[1]} Q${ctrl[0]} ${ctrl[1]} ${A2[0]} ${A2[1]} L${C2[0]} ${C2[1]}`;
+}
+/* Capsule (FIFA-style lozenge) behind a match's two participant slots, used by
+   the venue spotlight. A thick round-capped arc stroke along the child ring
+   between the two participants reads as a pill bent along the ring; the final's
+   participants sit 180° apart, so its capsule runs straight through the center. */
+const CAP_W = {1:82, 2:72, 3:66, 4:64, 5:64}; // stroke width per match level
+function capsulePath(num){
+  const lvl = levelOf(num);
+  const R = RADIUS[lvl-1];
+  if (num===ROOT){
+    const [x1,y1] = pt(R, angleOf(101)), [x2,y2] = pt(R, angleOf(102));
+    return `M${x1} ${y1} L${x2} ${y2}`;
+  }
+  const [a1,a2] = R32SET.has(num)
+    ? [childFlagAngle(num,0), childFlagAngle(num,1)]
+    : [angleOf(CHILDREN[num][0]), angleOf(CHILDREN[num][1])];
+  const [x1,y1] = pt(R,a1), [x2,y2] = pt(R,a2);
+  return `M${x1} ${y1} A ${R} ${R} 0 0 ${a2>=a1?1:0} ${x2} ${y2}`;
+}
+
+// angle of one of a R32 node's two outer flags (slot 0/1)
+function childFlagAngle(num, slot){
+  let n=0, target=-1;
+  for (let i=0;i<FLAG_ORDER.length;i++){
+    if (FLAG_ORDER[i].num===num){ if (FLAG_ORDER[i].slot===slot){ target=i; break; } }
+  }
+  return flagAngle(target);
+}
+
+function trophySVG(ground){
+  // simple trophy glyph centered at (CX,CY); tagged with the final's venue
+  return `<g class="trophy" data-ground="${escapeAttr(ground||"")}" transform="translate(${CX},${CY})" fill="var(--line)">
+    <path d="M-16,-26 h32 v8 a16,18 0 0 1 -32,0 z" />
+    <path d="M-22,-24 a8,8 0 0 0 8,8 v-4 a4,4 0 0 1 -4,-4 z" />
+    <path d="M22,-24 a8,8 0 0 1 -8,8 v-4 a4,4 0 0 0 4,-4 z" />
+    <rect x="-4" y="-6" width="8" height="12"/>
+    <rect x="-12" y="6" width="24" height="5" rx="2"/>
+    <rect x="-16" y="11" width="32" height="6" rx="2"/>
+  </g>`;
+}
+
+function render(model){
+  nowMs = Date.now();
+  const newWinners = {};
+  const flags = []; // {x,y,team,cls,title}
+
+  // 32 outer flags (always shown)
+  FLAG_ORDER.forEach((f,i)=>{
+    const team = (model[f.num].participants[f.slot]) || "";
+    if (!team) return;
+    const [x,y] = pt(RADIUS[0], flagAngle(i));
+    const win = model[f.num].winner;
+    const elim = win && win!==team; // this team lost its R32 match
+    const tip = tipFor(model,f.num);
+    flags.push({x,y,team,cls:"r0"+(elim?" eliminated":(win===team?" win":""))+hlClass(tip),
+                tip, ground:model[f.num].ground});
+  });
+
+  // Build connectors + dots/winner-flags for every match node
+  let conns = "";
+  let dots = "";
+  let caps = "";
+  for (const num of NODE_NUMS){
+    const lvl = levelOf(num);
+    const gAttr = `data-ground="${escapeAttr(model[num].ground)}"`;
+    // the capsule is also the match's always-on tooltip hitbox, so it carries
+    // the same tip data as a flag even while invisible
+    caps += `<path class="cap${nationClass(model[num].ground)}" ${tipAttrs(tipFor(model,num), model[num].ground)} `+
+            `stroke-width="${CAP_W[lvl]}" d="${capsulePath(num)}"/>`;
+    if (lvl<=4) conns += `<path class="conn" ${gAttr} d="${connectorPath(num)}"/>`;
+    const ang = angleOf(num);
+    if (num===ROOT) continue; // final handled at center
+    const [x,y] = pt(RADIUS[lvl], ang);
+    const w = model[num].winner;
+    if (w){
+      newWinners[num] = w;
+      const pop = (prevWinners[num]!==w) ? " pop" : "";
+      // A winner flag sits on the way toward the center, so its tooltip describes
+      // where the team goes NEXT (result if played, otherwise the schedule) rather
+      // than the match it already won. The match just won is still on the team's
+      // outer flag. PARENT[num] is the next-round match; fall back to num if absent.
+      const nextNum = PARENT[num];
+      const tip = nextNum!=null ? tipFor(model,nextNum) : tipFor(model,num);
+      // Gold "win" ring when this team also won its NEXT match — the same rule the
+      // R32 ring uses (winner of two adjacent participants). So on each ring inward,
+      // the flag that advanced out of that round is highlighted.
+      const advanced = nextNum!=null && model[nextNum] && model[nextNum].winner===w ? " win" : "";
+      flags.push({x,y,team:w,cls:`r${lvl}${advanced}${pop}${hlClass(tip)}`, tip, ground:model[num].ground});
+    } else {
+      dots += `<circle class="dot" ${gAttr} cx="${x}" cy="${y}" r="3.4"/>`;
+    }
+  }
+
+  // Final / center
+  const finalNode = model[ROOT];
+  const finalG = `data-ground="${escapeAttr(finalNode.ground)}"`;
+  const sf1 = pt(RADIUS[4], angleOf(101)), sf2 = pt(RADIUS[4], angleOf(102));
+  let center = `<line class="center-line" ${finalG} x1="${CX}" y1="${CY}" x2="${sf1[0]}" y2="${sf1[1]}"/>
+                <line class="center-line" ${finalG} x1="${CX}" y1="${CY}" x2="${sf2[0]}" y2="${sf2[1]}"/>`;
+  let champFlag = null;
+  if (finalNode.winner){
+    newWinners[ROOT] = finalNode.winner;
+    const pop = (prevWinners[ROOT]!==finalNode.winner) ? " pop" : "";
+    const t = tipFor(model,ROOT); t.round = "Champion";
+    champFlag = {x:CX,y:CY,team:finalNode.winner,cls:`champ${pop}`,tip:t,ground:finalNode.ground};
+  } else {
+    center += trophySVG(finalNode.ground);
+  }
+
+  // Assemble SVG (lines + dots + trophy) then the flag overlay
+  let html = `<svg viewBox="0 0 1000 1000" role="img">${caps}${conns}${center}${dots}</svg>`;
+  const allFlags = champFlag ? flags.concat([champFlag]) : flags;
+  for (const fl of allFlags){
+    const w = fl.cls.indexOf("champ")>=0 ? "w320" : "w160";
+    const src = flagURL(fl.team, w);
+    const left = (fl.x/1000*100).toFixed(3);
+    const top  = (fl.y/1000*100).toFixed(3);
+    const t = fl.tip || {round:"",teams:fl.team,score:"",when:"",status:"",venue:""};
+    const data = tipAttrs(t, fl.ground);
+    if (src){
+      // on image error, fall back to a neutral circle so the bracket never gaps
+      html += `<img class="flag ${fl.cls}" src="${src}" alt="${fl.team}" ${data} loading="lazy"
+                 style="left:${left}%;top:${top}%" onerror="this.removeAttribute('src');this.style.background='#cfc9bd'"/>`;
+    } else {
+      // unknown team string -> neutral placeholder so the bracket never blanks
+      html += `<div class="flag ${fl.cls}" ${data} style="left:${left}%;top:${top}%;background:#cfc9bd"></div>`;
+    }
+  }
+  stage.innerHTML = html;
+  prevWinners = newWinners;
+  // re-render replaced the stage DOM, so refresh the legend + venue spotlight
+  buildLegend(model);
+  applyVenueHL();
+}
+
+function roundName(num){
+  const l = levelOf(num);
+  return ["","Round of 32","Round of 16","Quarter-final","Semi-final","Final"][l];
+}
+function escapeAttr(s){ return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+function escapeHTML(s){ return escapeAttr(s).replace(/>/g,"&gt;"); }
+
+/* ---- Custom tooltip: hover on desktop, tap on touch (design §7 score display) ---- */
+const tipEl = document.createElement("div");
+tipEl.className = "tooltip";
+document.body.appendChild(tipEl);
+
+function showTip(el, ev){
+  const d = el.dataset;
+  if (!d || !d.teams) return;
+  let scoreHTML;
+  if (d.score){
+    scoreHTML = `<div class="tt-score">${escapeHTML(d.score)}</div>`;
+  } else if (d.status === "live"){
+    // Live: kickoff has passed but no final score has landed from the feed yet.
+    scoreHTML = `<div class="tt-score live"><span class="live-dot"></span>Live</div>`
+              + (d.when ? `<div class="tt-soon">Kicked off · ${escapeHTML(d.when)}</div>` : "");
+  } else {
+    const ahead = d.status === "deck" ? "Next" : d.status === "soon" ? "Today" : "";
+    scoreHTML = `<div class="tt-score pending">${escapeHTML(d.when || "Not played yet")}</div>`
+              + (ahead ? `<div class="tt-soon">${ahead}</div>` : "");
+  }
+  tipEl.innerHTML =
+    (d.round ? `<div class="tt-round">${escapeHTML(d.round)}</div>` : "") +
+    `<div class="tt-teams">${escapeHTML(d.teams)}</div>` + scoreHTML +
+    (d.venue ? `<div class="tt-venue">${escapeHTML(d.venue)}</div>` : "");
+  positionTip(el, ev);
+  tipEl.classList.add("on");
+}
+/* Flags anchor the tip above their own center. Capsules are long arcs whose
+   bounding box says nothing useful, so their tip anchors at the pointer. */
+function positionTip(el, ev){
+  const isCap = el.classList.contains("cap");
+  const r = isCap ? null : el.getBoundingClientRect();
+  const ax     = isCap ? ev.clientX : r.left + r.width/2;
+  const top    = isCap ? ev.clientY : r.top;
+  const bottom = isCap ? ev.clientY : r.bottom;
+  const cx = Math.min(Math.max(ax, 8), window.innerWidth - 8);
+  const flip = top < 90; // near top edge -> show below the anchor
+  tipEl.classList.toggle("below", flip);
+  tipEl.style.left = cx + "px";
+  tipEl.style.top  = (flip ? bottom : top) + "px";
+}
+function hideTip(){ tipEl.classList.remove("on"); }
+
+// hover (desktop) — both flags and the (invisible) match capsules carry tips.
+// A capsule's tip waits for a settled hover before appearing, so sweeping the
+// pointer across the bracket doesn't flash tooltips from every arc it crosses.
+const CAP_TIP_DELAY = 600; // ms of steady hover before a capsule tip shows
+let capTipTimer = null, capTipEv = null;
+function cancelCapTip(){ clearTimeout(capTipTimer); capTipTimer = null; }
+stage.addEventListener("pointerover", e=>{
+  const el = e.target.closest(".flag,.cap");
+  if (!el || e.pointerType==="touch") return;
+  if (el.classList.contains("cap")){
+    cancelCapTip();
+    capTipEv = e;
+    capTipTimer = setTimeout(()=>{ capTipTimer = null; showTip(el, capTipEv); }, CAP_TIP_DELAY);
+  } else {
+    showTip(el, e);
+  }
+});
+stage.addEventListener("pointerout", e=>{
+  if (e.target.closest(".flag,.cap") && e.pointerType!=="touch"){ cancelCapTip(); hideTip(); }
+});
+// a capsule is a long arc, so let its tooltip follow the pointer along it
+// (and keep a still-pending tip anchored to where the pointer settles)
+stage.addEventListener("pointermove", e=>{
+  if (e.pointerType==="touch") return;
+  const el = e.target.closest(".cap");
+  if (!el) return;
+  capTipEv = e;
+  if (tipEl.classList.contains("on")) positionTip(el, e);
+});
+// tap (touch): toggle, and dismiss when tapping elsewhere
+stage.addEventListener("click", e=>{
+  const el = e.target.closest(".flag,.cap");
+  if (el){ e.stopPropagation(); cancelCapTip(); tipEl.classList.contains("on") ? hideTip() : showTip(el, e); }
+});
+document.addEventListener("click", ()=>hideTip());
+window.addEventListener("scroll", hideTip, {passive:true});
+
+/* ---- Venue toggle + interactive legend (stadium spotlight) ----
+   One pill per stadium hosting bracket matches. Hover previews (desktop);
+   click/tap pins one stadium; ctrl/cmd/shift-click toggles a stadium in and
+   out of the pinned set, so several can be spotlit at once. Clicking the only
+   pinned pill unpins. Highlight = every element tagged with a selected ground
+   gets .vhit while .vfilter fades the rest. */
+const venueToggle = document.getElementById("venueToggle");
+const legendEl = document.getElementById("venueLegend");
+let venuesOn = false, venuePinned = new Set(), venueHover = null;
+let legendHTML = ""; // rebuild the pills only when the feed's venues change
+
+function buildLegend(model){
+  const counts = {}; // ground -> number of bracket matches there
+  for (const num of NODE_NUMS){
+    const g = model[num].ground;
+    if (g) counts[g] = (counts[g]||0)+1;
+  }
+  for (const g of [...venuePinned]) if (!counts[g]) venuePinned.delete(g);
+  const keys = Object.keys(counts).sort((a,b)=>venueLabel(a).localeCompare(venueLabel(b)));
+  let html = "";
+  for (const g of keys){
+    html += `<button class="venue${nationClass(g)}" data-ground="${escapeAttr(g)}" `+
+            `title="Click to spotlight · Ctrl/Cmd-click to add">`+
+            `${escapeHTML(venueLabel(g))}<span class="n">${counts[g]}</span></button>`;
+  }
+  if (html !== legendHTML){ legendEl.innerHTML = html; legendHTML = html; }
+}
+
+function applyVenueHL(){
+  // spotlight = pinned set, plus the hovered pill as a live preview
+  const sel = new Set(venuesOn ? venuePinned : []);
+  if (venuesOn && venueHover) sel.add(venueHover);
+  // venues-on reveals every crescent; vfilter (something actually pinned/hovered)
+  // then narrows the spotlight to the selection.
+  stage.classList.toggle("venues-on", venuesOn);
+  stage.classList.toggle("vfilter", sel.size>0);
+  for (const el of stage.querySelectorAll("[data-ground]")){
+    el.classList.toggle("vhit", sel.has(el.getAttribute("data-ground")));
+  }
+  for (const b of legendEl.querySelectorAll(".venue")){
+    b.classList.toggle("sel", venuesOn && venuePinned.has(b.dataset.ground));
+  }
+}
+
+venueToggle.addEventListener("click", ()=>{
+  venuesOn = !venuesOn;
+  if (!venuesOn){ venuePinned.clear(); venueHover = null; }
+  venueToggle.classList.toggle("on", venuesOn);
+  venueToggle.setAttribute("aria-pressed", String(venuesOn));
+  venueToggle.textContent = venuesOn ? "Hide venues" : "Show venues";
+  legendEl.classList.toggle("on", venuesOn);
+  applyVenueHL();
+});
+// hover previews on desktop only — on touch, hover would fight the tap-to-pin
+legendEl.addEventListener("pointerover", e=>{
+  const b = e.target.closest(".venue");
+  if (b && e.pointerType!=="touch"){ venueHover = b.dataset.ground; applyVenueHL(); }
+});
+legendEl.addEventListener("pointerout", e=>{
+  if (e.target.closest(".venue") && e.pointerType!=="touch"){ venueHover = null; applyVenueHL(); }
+});
+legendEl.addEventListener("click", e=>{
+  const b = e.target.closest(".venue");
+  if (!b) return;
+  const g = b.dataset.ground;
+  if (e.ctrlKey || e.metaKey || e.shiftKey){
+    // modifier-click: toggle this stadium in/out of the multi-selection
+    venuePinned.has(g) ? venuePinned.delete(g) : venuePinned.add(g);
+  } else if (venuePinned.size===1 && venuePinned.has(g)){
+    venuePinned.clear(); // clicking the only pinned pill unpins
+  } else {
+    venuePinned = new Set([g]); // plain click replaces the selection
+  }
+  applyVenueHL();
+});
+
+/* ------------------------------- Load once -------------------------------- */
+const statusEl = document.getElementById("status");
+const dotEl = document.getElementById("statusDot");
+let dataUpdatedAt = null; // when the source feed last changed (its latest commit)
+
+async function refreshDataUpdatedAt(){
+  try{
+    const res = await fetch(FEED_COMMITS_URL);
+    if (!res.ok) return; // rate-limited etc. — keep last known value
+    const commits = await res.json();
+    const iso = commits?.[0]?.commit?.committer?.date;
+    if (iso) dataUpdatedAt = new Date(iso);
+  }catch(err){ console.warn("commit lookup failed:", err); }
+}
+
+function fmtStamp(d){
+  const opts = {hour:"2-digit", minute:"2-digit"};
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString([], opts)
+    : d.toLocaleString([], {month:"short", day:"numeric", ...opts});
+}
+
+function stamp(ok, msg){
+  dotEl.className = "status-dot " + (ok?"ok":"err");
+  const parts = [];
+  if (msg) parts.push(msg);
+  if (dataUpdatedAt) parts.push("data updated " + fmtStamp(dataUpdatedAt));
+  statusEl.textContent = parts.join(" · ");
+}
+
+async function load(){
+  try{
+    const [raw] = await Promise.all([fetchResults(), refreshDataUpdatedAt()]);
+    render(buildModel(normalize(raw)));
+    stamp(true);
+  }catch(err){
+    stamp(false, "couldn't load results — reload to retry");
+    console.warn("fetch failed:", err);
+  }
+}
+
+load();
+</script>
+</body>
+</html>
