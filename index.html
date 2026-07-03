@@ -37,6 +37,7 @@
     font-weight:800;
     letter-spacing:.2px;
   }
+  #langToggle{margin-top:6px}
   /* Desktop: tighten the header so the venue controls sit higher and show more readily */
   @media (min-width:720px){
     header{padding:8px 12px 2px}
@@ -188,19 +189,20 @@
 </head>
 <body>
   <header>
-    <h1>World Cup 2026</h1>
+    <h1 data-i18n="header">World Cup 2026</h1>
+    <button id="langToggle" class="vtoggle" type="button" aria-pressed="false">EN</button>
   </header>
 
-  <div class="stage" id="stage" aria-label="World Cup 2026 knockout bracket"></div>
+  <div class="stage" id="stage" data-i18n-attr="aria-label:stageAriaLabel" aria-label="World Cup 2026 knockout bracket"></div>
 
   <div class="controls">
     <button class="vtoggle" id="venueToggle" aria-pressed="false">Show venues</button>
-    <div class="legend" id="venueLegend" role="group" aria-label="Stadiums"></div>
+    <div class="legend" id="venueLegend" role="group" data-i18n-attr="aria-label:legendAriaLabel" aria-label="Stadiums"></div>
   </div>
 
   <footer>
     <div><span class="status-dot" id="statusDot"></span><span id="status">Loading…</span></div>
-    <div style="margin-top:4px">Data: <a href="https://github.com/openfootball/worldcup.json" target="_blank" rel="noopener">openfootball</a> · Flags: <a href="https://flagcdn.com" target="_blank" rel="noopener">flagcdn</a></div>
+    <div style="margin-top:4px"><span data-i18n="dataLabel">Data:</span> <a href="https://github.com/openfootball/worldcup.json" target="_blank" rel="noopener">openfootball</a> · <span data-i18n="flagsLabel">Flags:</span> <a href="https://flagcdn.com" target="_blank" rel="noopener">flagcdn</a></div>
   </footer>
 
 <script>
@@ -222,6 +224,76 @@ const FEED_URL = "https://raw.githubusercontent.com/openfootball/worldcup.json/m
 /* Last-commit time of the feed file = when the source data actually changed.
    Unauthenticated GitHub API: 60 req/h per IP; one call per page load. */
 const FEED_COMMITS_URL = "https://api.github.com/repos/openfootball/worldcup.json/commits?path=2026/worldcup.json&per_page=1&sha=master";
+
+/* --------------------------- i18n (English / pt-BR) -------------------------
+   Dependency-free translation layer for static chrome text only — title,
+   header, toggle labels, footer, tooltip/status vocabulary. Team names,
+   scores, dates/times, and stadium/venue names always come straight from the
+   feed (ISO/STADIUM/NATION below) and are never routed through t(). */
+const STRINGS = {
+  en: {
+    title: "World Cup 2026 Circular Bracket",
+    header: "World Cup 2026",
+    stageAriaLabel: "World Cup 2026 knockout bracket",
+    showVenues: "Show venues",
+    hideVenues: "Hide venues",
+    legendAriaLabel: "Stadiums",
+    venueTitleHint: "Click to spotlight · Ctrl/Cmd-click to add",
+    loading: "Loading…",
+    dataLabel: "Data:",
+    flagsLabel: "Flags:",
+    loadError: "couldn't load results — reload to retry",
+    dataUpdated: "data updated ",
+    notPlayed: "Not played yet",
+    live: "Live",
+    kickedOff: "Kicked off · ",
+    next: "Next",
+    today: "Today",
+    champion: "Champion",
+    r32: "Round of 32",
+    r16: "Round of 16",
+    qf: "Quarter-final",
+    sf: "Semi-final",
+    final: "Final"
+  },
+  pt: {
+    title: "Copa do Mundo 2026 — Chave Circular",
+    header: "Copa do Mundo 2026",
+    stageAriaLabel: "Chave eliminatória da Copa do Mundo 2026",
+    showVenues: "Mostrar sedes",
+    hideVenues: "Ocultar sedes",
+    legendAriaLabel: "Estádios",
+    venueTitleHint: "Clique para destacar · Ctrl/Cmd-clique para adicionar",
+    loading: "Carregando…",
+    dataLabel: "Dados:",
+    flagsLabel: "Bandeiras:",
+    loadError: "não foi possível carregar os resultados — recarregue para tentar novamente",
+    dataUpdated: "dados atualizados ",
+    notPlayed: "Ainda não jogado",
+    live: "Ao vivo",
+    kickedOff: "Começou · ",
+    next: "Próximo",
+    today: "Hoje",
+    champion: "Campeão",
+    r32: "Dezesseis-avos de final",
+    r16: "Oitavas de final",
+    qf: "Quartas de final",
+    sf: "Semifinal",
+    final: "Final"
+  }
+};
+// Translation lookup: falls back to the English entry for a key missing from
+// the active language, so a partial STRINGS.pt entry never renders blank.
+function t(key){ const d = STRINGS[LANG] || STRINGS.en; return (key in d) ? d[key] : (STRINGS.en[key] || ""); }
+// localStorage["wc26-lang"] (explicit user choice) wins over the browser's
+// reported language; only an explicit toggle click ever writes to storage.
+function getInitialLang(){
+  const stored = localStorage.getItem("wc26-lang");
+  if (stored === "en" || stored === "pt") return stored;
+  const nav = (navigator.language || (navigator.languages && navigator.languages[0]) || "en").toLowerCase();
+  return nav.startsWith("pt") ? "pt" : "en";
+}
+let LANG = getInitialLang();
 
 /* Team name -> ISO 3166-1 alpha-2 (flagcdn slug). The only hand-authored data.
    Must match the exact strings the feed uses. */
@@ -459,6 +531,7 @@ window.addEventListener("resize", ()=>{
 });
 let prevWinners = {}; // num -> winner team, for diff/pop animation
 let nowMs = Date.now(); // one consistent clock per render, for live/deck/soon highlighting
+let lastModel = null; // last model passed to render(), so a language toggle can re-render without re-fetching
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 // Parse the feed's "12:00 UTC-4" / "20:00 UTC+5:30" (venue local time with an explicit
@@ -476,7 +549,7 @@ function kickoffInstant(dateStr, timeStr){
   return isNaN(d.getTime()) ? null : d;
 }
 function kickoff(node){ // -> e.g. "28 Jun · 12:00 PDT" in the viewer's own time zone
-  if (!node.date) return "Not played yet";
+  if (!node.date) return t("notPlayed");
   const d = kickoffInstant(node.date, node.time);
   if (d){
     const day = d.toLocaleDateString([], {day:"numeric", month:"short"});
@@ -584,6 +657,7 @@ function trophySVG(ground){
 }
 
 function render(model){
+  lastModel = model;
   nowMs = Date.now();
   const newWinners = {};
   const flags = []; // {x,y,team,cls,title}
@@ -651,8 +725,8 @@ function render(model){
   if (finalNode.winner){
     newWinners[ROOT] = finalNode.winner;
     const pop = (prevWinners[ROOT]!==finalNode.winner) ? " pop" : "";
-    const t = tipFor(model,ROOT); t.round = "Champion";
-    champFlag = {x:CX,y:CY,team:finalNode.winner,cls:`champ${pop}${hostClass(finalNode.winner)}`,tip:t,ground:finalNode.ground};
+    const champTip = tipFor(model,ROOT); champTip.round = t("champion");
+    champFlag = {x:CX,y:CY,team:finalNode.winner,cls:`champ${pop}${hostClass(finalNode.winner)}`,tip:champTip,ground:finalNode.ground};
   } else {
     center += trophySVG(finalNode.ground);
   }
@@ -665,8 +739,8 @@ function render(model){
     const src = flagURL(fl.team, w);
     const left = (fl.x/1000*100).toFixed(3);
     const top  = (fl.y/1000*100).toFixed(3);
-    const t = fl.tip || {round:"",teams:fl.team,score:"",when:"",status:"",venue:""};
-    const data = tipAttrs(t, fl.ground);
+    const tipData = fl.tip || {round:"",teams:fl.team,score:"",when:"",status:"",venue:""};
+    const data = tipAttrs(tipData, fl.ground);
     if (src){
       // on image error, fall back to a neutral circle so the bracket never gaps
       html += `<img class="flag ${fl.cls}" src="${src}" alt="${fl.team}" ${data} loading="lazy"
@@ -685,7 +759,8 @@ function render(model){
 
 function roundName(num){
   const l = levelOf(num);
-  return ["","Round of 32","Round of 16","Quarter-final","Semi-final","Final"][l];
+  const key = ["","r32","r16","qf","sf","final"][l];
+  return key ? t(key) : "";
 }
 function escapeAttr(s){ return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
 function escapeHTML(s){ return escapeAttr(s).replace(/>/g,"&gt;"); }
@@ -703,11 +778,11 @@ function showTip(el, ev){
     scoreHTML = `<div class="tt-score">${escapeHTML(d.score)}</div>`;
   } else if (d.status === "live"){
     // Live: kickoff has passed but no final score has landed from the feed yet.
-    scoreHTML = `<div class="tt-score live"><span class="live-dot"></span>Live</div>`
-              + (d.when ? `<div class="tt-soon">Kicked off · ${escapeHTML(d.when)}</div>` : "");
+    scoreHTML = `<div class="tt-score live"><span class="live-dot"></span>${t("live")}</div>`
+              + (d.when ? `<div class="tt-soon">${t("kickedOff")}${escapeHTML(d.when)}</div>` : "");
   } else {
-    const ahead = d.status === "deck" ? "Next" : d.status === "soon" ? "Today" : "";
-    scoreHTML = `<div class="tt-score pending">${escapeHTML(d.when || "Not played yet")}</div>`
+    const ahead = d.status === "deck" ? t("next") : d.status === "soon" ? t("today") : "";
+    scoreHTML = `<div class="tt-score pending">${d.when ? escapeHTML(d.when) : t("notPlayed")}</div>`
               + (ahead ? `<div class="tt-soon">${ahead}</div>` : "");
   }
   tipEl.innerHTML =
@@ -792,7 +867,7 @@ function buildLegend(model){
   let html = "";
   for (const g of keys){
     html += `<button class="venue${nationClass(g)}" data-ground="${escapeAttr(g)}" `+
-            `title="Click to spotlight · Ctrl/Cmd-click to add">`+
+            `title="${escapeAttr(t("venueTitleHint"))}">`+
             `${escapeHTML(venueLabel(g))}<span class="n">${counts[g]}</span></button>`;
   }
   if (html !== legendHTML){ legendEl.innerHTML = html; legendHTML = html; }
@@ -819,9 +894,43 @@ venueToggle.addEventListener("click", ()=>{
   if (!venuesOn){ venuePinned.clear(); venueHover = null; }
   venueToggle.classList.toggle("on", venuesOn);
   venueToggle.setAttribute("aria-pressed", String(venuesOn));
-  venueToggle.textContent = venuesOn ? "Hide venues" : "Show venues";
+  venueToggle.textContent = venuesOn ? t("hideVenues") : t("showVenues");
   legendEl.classList.toggle("on", venuesOn);
   applyVenueHL();
+});
+
+/* ---- Language toggle (English / pt-BR) ----
+   Static chrome text only — team names/scores/dates/venues are never touched
+   here. applyLanguage() updates every [data-i18n]/[data-i18n-attr] node plus
+   the handful of dynamic bits (status line, venue-toggle label, its own
+   label) that a generic textContent pass can't handle safely. */
+const langToggle = document.getElementById("langToggle");
+
+function applyLanguage(){
+  document.documentElement.lang = LANG === "pt" ? "pt-BR" : "en";
+  document.title = t("title");
+  for (const el of document.querySelectorAll("[data-i18n]")) el.textContent = t(el.getAttribute("data-i18n"));
+  for (const el of document.querySelectorAll("[data-i18n-attr]")){
+    const [attr, key] = el.getAttribute("data-i18n-attr").split(":");
+    el.setAttribute(attr, t(key));
+  }
+  venueToggle.textContent = venuesOn ? t("hideVenues") : t("showVenues");
+  // #status: re-stamp with the last known ok/msgKey (translating it), or fall
+  // back to the "loading" placeholder if the feed hasn't resolved yet — never
+  // clobber real data with a generic string.
+  if (lastStamp) stamp(lastStamp.ok, lastStamp.msgKey); else statusEl.textContent = t("loading");
+  langToggle.textContent = LANG === "pt" ? "PT-BR" : "EN";
+  langToggle.setAttribute("aria-pressed", String(LANG === "pt"));
+}
+
+langToggle.addEventListener("click", ()=>{
+  LANG = LANG === "pt" ? "en" : "pt";
+  localStorage.setItem("wc26-lang", LANG);
+  applyLanguage();
+  // Round names / tooltip vocabulary are baked into the SVG+flag HTML string
+  // render() builds, so the switch needs a re-render — reuse the cached
+  // model rather than calling fetchResults()/load() again.
+  if (lastModel) render(lastModel);
 });
 // hover previews on desktop only — on touch, hover would fight the tap-to-pin
 legendEl.addEventListener("pointerover", e=>{
@@ -868,11 +977,13 @@ function fmtStamp(d){
     : d.toLocaleString([], {month:"short", day:"numeric", ...opts});
 }
 
-function stamp(ok, msg){
+let lastStamp = null; // {ok, msgKey} of the last stamp() call, so a language switch can retranslate it
+function stamp(ok, msgKey){
+  lastStamp = {ok, msgKey};
   dotEl.className = "status-dot " + (ok?"ok":"err");
   const parts = [];
-  if (msg) parts.push(msg);
-  if (dataUpdatedAt) parts.push("data updated " + fmtStamp(dataUpdatedAt));
+  if (msgKey) parts.push(t(msgKey));
+  if (dataUpdatedAt) parts.push(t("dataUpdated") + fmtStamp(dataUpdatedAt));
   statusEl.textContent = parts.join(" · ");
 }
 
@@ -882,11 +993,12 @@ async function load(){
     render(buildModel(normalize(raw)));
     stamp(true);
   }catch(err){
-    stamp(false, "couldn't load results — reload to retry");
+    stamp(false, "loadError");
     console.warn("fetch failed:", err);
   }
 }
 
+applyLanguage();
 load();
 </script>
 </body>
