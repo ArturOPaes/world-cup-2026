@@ -249,6 +249,10 @@ function flagURL(team, w){ // w = flagcdn width bucket
    NATION below is keyed on host city and drives a separate, unrelated feature). */
 const HOST = {"USA":"us","United States":"us","Mexico":"mx","Canada":"ca"};
 function hostClass(team){ const h = HOST[team]; return h ? " host-"+h : ""; }
+/* Connector stroke color for a match's winner: host nations get their tint,
+   everyone else keeps the neutral default. Never hardcode hex — resolve
+   through the same CSS vars used for flag rendering. */
+function teamLineColor(team){ const h = HOST[team]; return h ? "var(--"+h+")" : "var(--line)"; }
 
 /* Feed "ground" (host city) -> stadium name. Hand-authored like ISO, keyed on
    the exact strings the feed uses; an unknown ground falls back to the raw
@@ -607,11 +611,17 @@ function render(model){
     // the same tip data as a flag even while invisible
     caps += `<path class="cap${nationClass(model[num].ground)}" ${tipAttrs(tipFor(model,num), model[num].ground)} `+
             `stroke-width="${CAP_W[lvl]}" d="${capsulePath(num)}"/>`;
-    if (lvl<=4) conns += `<path class="conn" ${gAttr} d="${connectorPath(num)}"/>`;
+    const w = model[num].winner;
+    if (lvl<=4){
+      // A decided match tints its connector with the winner's color (host-nation
+      // vars, or the neutral default) — the winner string itself never reaches
+      // an attribute, only the literal var(--...) CSS value does.
+      const strokeStyle = w ? ` style="stroke:${teamLineColor(w)}"` : "";
+      conns += `<path class="conn" ${gAttr}${strokeStyle} d="${connectorPath(num)}"/>`;
+    }
     const ang = angleOf(num);
     if (num===ROOT) continue; // final handled at center
     const [x,y] = pt(RADIUS[lvl], ang);
-    const w = model[num].winner;
     if (w){
       newWinners[num] = w;
       const pop = (prevWinners[num]!==w) ? " pop" : "";
